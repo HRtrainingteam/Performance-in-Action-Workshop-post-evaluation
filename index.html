@@ -318,6 +318,36 @@ h1{font-size:42px;line-height:1.12;margin-bottom:18px}
 
 .footer{text-align:center;color:#98a2b3;font-size:12px;padding:0 20px 35px}
 
+
+.timer-wrap{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:15px;
+  margin-bottom:18px;
+  padding:12px 15px;
+  border:1px solid var(--border);
+  border-radius:12px;
+  background:#f8fafc;
+}
+.timer-label{
+  font-size:13px;
+  font-weight:700;
+  color:var(--muted);
+}
+.timer{
+  font-size:18px;
+  font-weight:900;
+  color:var(--blue);
+  font-variant-numeric:tabular-nums;
+}
+.timer.warning{
+  color:#dc6803;
+}
+.timer.danger{
+  color:var(--danger);
+}
+
 @media(max-width:700px){
   .container{margin:25px auto}
   .start-content,.quiz-content,.done-content{padding:30px 22px}
@@ -398,6 +428,11 @@ h1{font-size:42px;line-height:1.12;margin-bottom:18px}
       <div id="percent" class="percent">6%</div>
     </div>
 
+    <div class="timer-wrap">
+      <div class="timer-label">Time Remaining</div>
+      <div id="timer" class="timer">12:00</div>
+    </div>
+
     <div class="progress">
       <div id="progressBar" class="progress-bar"></div>
     </div>
@@ -425,7 +460,7 @@ h1{font-size:42px;line-height:1.12;margin-bottom:18px}
 
     <p id="thanks">Thank you.</p>
 
-    <p>Your Performance in Action post-evaluation has been recorded.</p>
+    <p>Your Performance in Action post-evaluation has been recorded. Unanswered questions remain blank.</p>
 
     <div class="score-box">
       <div class="score-label">Your Score</div>
@@ -649,6 +684,11 @@ let answers = [];
 let cur = 0;
 let startedAt = 0;
 let submitting = false;
+let timerInterval = null;
+let deadline = 0;
+let timeExpired = false;
+
+const TIME_LIMIT_SECONDS = 12 * 60;
 
 const LETTERS = ["A","B","C","D"];
 
@@ -698,6 +738,8 @@ $("startBtn").addEventListener("click",function(){
 
   cur = 0;
   startedAt = Date.now();
+  timeExpired = false;
+  startTimer();
 
   $("start").classList.add("hidden");
   $("quiz").classList.remove("hidden");
@@ -708,8 +750,106 @@ $("startBtn").addEventListener("click",function(){
 
 
 /* ============================================================
+   12-MINUTE TIMER
+   ============================================================ */
+
+function startTimer(){
+
+  clearInterval(timerInterval);
+
+  deadline = Date.now() + (TIME_LIMIT_SECONDS * 1000);
+
+  updateTimer();
+
+  timerInterval = setInterval(function(){
+
+    updateTimer();
+
+  },1000);
+
+}
+
+function updateTimer(){
+
+  const remaining =
+    Math.max(
+      0,
+      Math.ceil(
+        (deadline - Date.now()) / 1000
+      )
+    );
+
+  const minutes =
+    Math.floor(remaining / 60);
+
+  const seconds =
+    remaining % 60;
+
+  const timer =
+    $("timer");
+
+  timer.textContent =
+    String(minutes).padStart(2,"0") +
+    ":" +
+    String(seconds).padStart(2,"0");
+
+  timer.classList.toggle(
+    "warning",
+    remaining <= 180 && remaining > 60
+  );
+
+  timer.classList.toggle(
+    "danger",
+    remaining <= 60
+  );
+
+  if(remaining <= 0){
+
+    clearInterval(timerInterval);
+
+    if(!timeExpired){
+
+      timeExpired = true;
+
+      autoSubmitOnTimeUp();
+
+    }
+
+  }
+
+}
+
+function autoSubmitOnTimeUp(){
+
+  /*
+    The employee is not required to answer
+    every question once the 12 minutes expire.
+    Only the questions already answered are scored.
+  */
+
+  const errorBox = $("submitErr");
+
+  if(submitting){
+    return;
+  }
+
+  submitting = true;
+
+  $("nextBtn").disabled = true;
+  $("prevBtn").disabled = true;
+
+  errorBox.classList.add("hidden");
+
+  submitAssessment(true);
+
+}
+
+
+/* ============================================================
    RENDER QUESTION
    ============================================================ */
+
+
 
 function renderQuestion(){
 
@@ -835,7 +975,7 @@ $("nextBtn").addEventListener("click",function(){
    SUBMIT
    ============================================================ */
 
-function submitAssessment(){
+function submitAssessment(forceSubmit = false){
 
   if(submitting){
     return;
@@ -844,28 +984,41 @@ function submitAssessment(){
   const errorBox = $("submitErr");
 
   /*
-    Make sure all 16 questions are answered.
+    Normal submission requires all questions.
+    Time-expiry submission scores only answered questions.
   */
 
-  if(answers.some(function(answer){
-    return answer === null;
-  })){
+  if(!forceSubmit){
 
-    errorBox.textContent =
-      "Please answer every question before submitting.";
+    if(answers.some(function(answer){
+      return answer === null;
+    })){
 
-    errorBox.classList.remove("hidden");
+      errorBox.textContent =
+        "Please answer every question before submitting.";
 
-    return;
+      errorBox.classList.remove("hidden");
+
+      return;
+    }
+
   }
 
 
   /*
     Calculate score.
+
+    IMPORTANT:
+    Unanswered questions remain blank and
+    are not counted as correct.
   */
 
   const score = answers.reduce(
     function(total,answer,index){
+
+      if(answer === null){
+        return total;
+      }
 
       return total +
         (answer === QUESTIONS[index].a ? 1 : 0);
@@ -1062,12 +1215,16 @@ function submitAssessment(){
 
 function showSuccess(score){
 
+  clearInterval(timerInterval);
+
   $("quiz").classList.add("hidden");
 
   $("done").classList.remove("hidden");
 
   $("thanks").textContent =
-    "Thank you, " + person.name + ".";
+    timeExpired
+      ? "Time is up, " + person.name + ". Your answered questions have been recorded."
+      : "Thank you, " + person.name + ".";
 
   $("score").textContent =
     score + " / " + QUESTIONS.length;
